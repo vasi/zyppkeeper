@@ -4,9 +4,15 @@ Declarative package management for OpenSUSE's zypper.
 
 ## Configuration
 
-List the packages you want to keep in .keep files in the ~/.config/keepers directory. Each of these files should contain a list of package names, one per line. You can format the files nicely: whitespace is ignored, and lines beginning with `#` are treated as comments.
+List the packages you want to keep in one or more files named `something.keep` in the ~/.config/zyppkeeper directory. Each of these files should contain a list of package names, one per line. You can format the files nicely: whitespace is ignored, and lines beginning with `#` are treated as comments.
 
 ## Usage
+
+To start our, you'll want an initial idea of what zypper thinks you installed explicitly. Before running any other zyppkeeper commands, run this to output a good guess:
+
+```
+zyppkeeper init
+```
 
 Some packages that are declared may not be installed on your system yet. To fix that:
 
@@ -14,7 +20,7 @@ Some packages that are declared may not be installed on your system yet. To fix 
 zyppkeeper install
 ```
 
-Some packages may be installed, but not declared. These should either be removed, or added to a .keep file.To list the top-level unneeded packages:
+Some packages may be installed, but not declared. These should either be removed, or added to a .keep file. To list the top-level unneeded packages:
 
 ```
 zyppkeeper unneeded
@@ -30,9 +36,13 @@ zyppkeeper clean
 
 It's just a Ruby script. Put it somewhere in your PATH.
 
-## Details
+Then try running `zyppkeeper unneeded` to output a guess at an initial set of keepers.
+
+## Notes
 
 Zyppkeeper considers a package needed if it is declared explicitly, or if it is pulled in by another needed package. This can be done via an RPM `Depends` specifier, or via a `Recommends`/`Enhances` specifiers (if zypper is configured to use them).
+
+Zyppkeeper needs to modify the file `/var/lib/zypp/AutoInstalled` to update zypper's idea of what was requested explicitly. This means commands will generally require `sudo`. Every time this file is modified, zyppkeeper will backup the previous version with a `.bak` extension.
 
 ## Inspiration
 

@@ -1,0 +1,123 @@
+#!/usr/bin/env ruby
+require 'etc'
+require 'pathname'
+require 'set'
+
+AUTOINSTALLED = Pathname.new('/var/lib/zypp/AutoInstalled')
+HOME = Dir.home(Etc.getlogin) # Get user's home dir even if using sudo
+CONFDIR = Pathname.new(HOME).join('.config', 'zyppkeeper')
+
+def read_package_list(path)
+  return Set.new unless path.file?
+  path.readlines
+    .map { |l| l.sub(/#.*$/, '').strip }
+    # AutoInstalled may include some non-package names, eg: for patterns
+    .reject { |l| l.include?(':') }
+    .reject(&:empty?)
+    .to_set
+end
+
+def read_keepers
+  CONFDIR.children
+    .select { |p| p.file? && p.extname == '.keep' }
+    .reduce(Set.new) do |ks, p|
+      ks.merge(read_package_list(p))
+    end
+end
+
+def currently_installed
+  IO.popen(['rpm', '-qa', '--qf', '%{NAME}\n']) do |io|
+    io.readlines.map(&:strip).to_set
+  end
+end
+
+def write_autoinstalled(keepers, current)
+  newauto = (current - keepers)
+  curauto = read_package_list(AUTOINSTALLED)
+  return if newauto == curauto # Don't write if nothing changed
+  
+  unless AUTOINSTALLED.parent.writable?
+    STDERR.puts "Can't write to #{AUTOINSTALLED}. Please run as root."
+    exit 1
+  end
+  
+  contents = newauto.sort.map { |pkg| "#{pkg}\n" }.join
+
+  bak = AUTOINSTALLED.sub_ext('.bak')
+  AUTOINSTALLED.rename(bak) if AUTOINSTALLED.file?
+  AUTOINSTALLED.write(contents)
+end
+
+def zypper_unneeded
+  cmd = ['zypper', '--disable-repositories', '--quiet', '--terse',
+         'packages', '--installed-only', '--unneeded']
+  unneeded = Set.new
+  IO.popen(cmd) do |io|
+    io.readlines.each do |line|
+      # Ignore headers, anything else but installed packages
+      next unless /^i/.match(line)
+      pkg = line.split('|')[2].strip
+      unneeded << pkg
+    end
+  end
+  unneeded
+end
+
+
+def do_init
+  pkgs = currently_installed - read_package_list(AUTOINSTALLED)
+  pkgs.sort.each { |pkg| puts pkg }
+end
+
+def do_install(keepers, current)
+  toinstall = (keepers - current).sort.to_a
+  if toinstall.empty?
+    STDERR.puts "No packages to install"
+    exit
+  end
+  STDERR.puts "Installing: #{toinstall.join(' ')}"
+  exec('zypper', 'install', '--', *toinstall)
+end
+
+def do_unneeded
+  zypper_unneeded.sort.each { |pkg| puts pkg }
+end
+
+def do_clean
+  unneeded = zypper_unneeded.sort.to_a
+  if unneeded.empty?
+    STDERR.puts "No unneeded packages to remove"
+    exit
+  end
+  STDERR.puts "Removing: #{unneeded.join(' ')}"
+  exec('zypper', 'remove', '--clean-deps', '--', *unneeded)
+end
+
+
+command = ARGV.shift
+
+# Init is special, doesn't need keepers or write to AUTOINSTALLED
+if command == "init"
+  do_init
+  exit
+end
+
+unless CONFDIR.directory?
+  STDERR.puts "Please create #{CONFDIR} and put some .keep files in it."
+  exit 1
+end
+
+keepers = read_keepers
+current = currently_installed
+write_autoinstalled(keepers, current)
+
+case command
+when "install"
+  do_install(keepers, current)
+when "unneeded"
+  do_unneeded
+when "clean"
+  do_clean
+else
+  puts "Usage: zyppkeeper (init | install | unneeded | clean)"
+end
